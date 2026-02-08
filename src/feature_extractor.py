@@ -17,8 +17,6 @@ class TiRexEmbedding(nn.Module):
         self.data_augmentation = data_augmentation
         self.number_of_patches = 8
         self.batch_size = batch_size
-        self.use_l2_norm = True
-        self.use_layer_norm = True
 
         if device is None:
             device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -73,7 +71,7 @@ class TiRexEmbedding(nn.Module):
         return embedding
 
 
-    def get_raw_embeddings(self, embedding: torch.Tensor, n_patches: int) -> torch.Tensor:
+    def process_embedding(self, embedding: torch.Tensor, n_patches: int) -> torch.Tensor:
         # embedding shape: (bs, var_dim, n_patches, n_layer, emb_dim)
         # extraction of last hidden layer
         embedding = embedding[:, :, :, -1, :]
@@ -90,6 +88,7 @@ class TiRexEmbedding(nn.Module):
         
         return embedding
 
+    @staticmethod
     def apply_normalization(embeddings, use_l2=True, use_ln=True):
         x = embeddings.float()
 
