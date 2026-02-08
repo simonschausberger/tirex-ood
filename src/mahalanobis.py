@@ -15,8 +15,8 @@ class Mahalanobis:
         self.class_counts = {}
         
         # global stats
-        self.running_mean = torch.zeros(feature_dim, dtype=torch.float64)
-        self.M2 = torch.zeros((feature_dim, feature_dim), dtype=torch.float64)
+        self.running_mean = torch.zeros(feature_dim, dtype=torch.bfloat16)
+        self.M2 = torch.zeros((feature_dim, feature_dim), dtype=torch.bfloat16)
         self.n_total = 0
         
         # inverse shared covariance matrix
@@ -29,7 +29,7 @@ class Mahalanobis:
 
 
     def update(self, embeddings, class_labels):
-        embeddings = embeddings.detach().to(torch.float64)
+        embeddings = embeddings.detach().to(torch.bfloat16)
         # handle entire batch at once
         batch_size = embeddings.size(0)
 
@@ -60,7 +60,7 @@ class Mahalanobis:
             count = label_data.size(0)
             
             if label not in self.class_sums:
-                self.class_sums[label] = torch.zeros(self.feature_dim, dtype=torch.float64)
+                self.class_sums[label] = torch.zeros(self.feature_dim, dtype=torch.bfloat16)
                 self.class_counts[label] = 0
             
             # update sum and counts
@@ -77,7 +77,7 @@ class Mahalanobis:
         cov = self.M2 / (self.n_total - 1)
 
         # apply shirnkage which pushes the matrix away from being singular
-        eye = torch.eye(self.feature_dim, dtype=torch.float64)
+        eye = torch.eye(self.feature_dim, dtype=torch.bfloat16)
         avg_variance = torch.mean(torch.diag(cov))
         cov = (1 - shrinkage) * cov + (shrinkage * avg_variance * eye)
 
@@ -96,7 +96,7 @@ class Mahalanobis:
             logger.error("Please call finalize() before calculating scores.")
             raise RuntimeError("Mahalanobis engine is not finalized. Call finalize() first.")
 
-        embeddings = embeddings.detach().to(torch.float64)
+        embeddings = embeddings.detach().to(torch.bfloat16)
         if embeddings.dim() == 1: 
             embeddings = embeddings.unsqueeze(0)
         
