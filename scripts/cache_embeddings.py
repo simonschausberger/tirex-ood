@@ -40,7 +40,7 @@ def cache_embeddings():
                             break
                         
                         # raw extraction without normalization
-                        raw = embedder.extract_raw(batch["inputs"].to(device))
+                        raw = embedder.get_raw_embeddings(batch["inputs"].to(device))
                         
                         subset_embs.append(raw.cpu().to(torch.bfloat16))
                         pbar.update(1)
