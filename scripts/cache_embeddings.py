@@ -91,7 +91,7 @@ def cache_all_groups():
                     flat_pred = median_pred.flatten()[:actual_horizon]
                     
                     # calculate mse
-                    mse = torch.mean((flat_pred - targets.flatten())**2).item()
+                    mse = torch.mean((flat_pred - targets.flatten().to(device))**2).item()
                     emb_cpu = raw_emb.cpu().to(torch.bfloat16)
 
                     if is_val:
