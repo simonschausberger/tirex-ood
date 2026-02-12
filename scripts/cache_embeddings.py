@@ -49,7 +49,6 @@ def cache_all_groups():
     logger.info("--- Processing ID Data (Single Pass: 1000 Train / 200 Val) ---")
     for repo, subsets in id_map.items():
         for subset in subsets:
-            # Only skip if both splits are already complete
             if subset in train_data and subset in val_data:
                 logger.info(f"Skipping {subset} (already cached)")
                 continue
@@ -62,13 +61,10 @@ def cache_all_groups():
             pbar = tqdm.tqdm(desc=f"Progress {subset}", leave=False)
             
             for batch in loader:
-                # Stop if both quotas are met
                 if len(tr_embs) >= TRAIN_LIMIT and len(vl_embs) >= VAL_LIMIT:
                     break
 
                 is_val = batch["is_val"][0]
-                
-                # Check if we still need samples for this specific split
                 if is_val and len(vl_embs) >= VAL_LIMIT: continue
                 if not is_val and len(tr_embs) >= TRAIN_LIMIT: continue
 
@@ -78,19 +74,13 @@ def cache_all_groups():
                 if actual_horizon == 0: continue
 
                 with torch.no_grad():
-                    # feature extraction
                     raw_emb = embedder(inputs)
-                    
-                    # forecasting
                     pred_input = inputs.squeeze(1) if inputs.ndim == 3 else inputs
                     out = embedder.model.forecast(pred_input, prediction_length=actual_horizon)
                     forecast_tensor = out[0] if isinstance(out, tuple) else out
-                    
-                    # median calculation
                     median_pred = forecast_tensor.median(dim=0).values if forecast_tensor.ndim == 3 else forecast_tensor
                     flat_pred = median_pred.flatten()[:actual_horizon]
                     
-                    # calculate mse
                     mse = torch.mean((flat_pred - targets.flatten().to(device))**2).item()
                     emb_cpu = raw_emb.cpu().to(torch.bfloat16)
 
@@ -104,8 +94,6 @@ def cache_all_groups():
                     pbar.update(1)
 
             pbar.close()
-
-            # Save both splits incrementally
             if tr_embs:
                 train_data[subset] = {"embeddings": torch.cat(tr_embs, dim=0), "mses": torch.tensor(tr_mses, dtype=torch.float32)}
                 torch.save(train_data, train_path)
@@ -130,7 +118,6 @@ def cache_all_groups():
             
             for batch in loader:
                 if len(embs) >= OOD_LIMIT: break
-                
                 inputs, targets = batch["inputs"].to(device), batch["targets"].to(device)
                 actual_horizon = targets.shape[-1]
                 if actual_horizon == 0: continue
@@ -141,7 +128,8 @@ def cache_all_groups():
                     out = embedder.model.forecast(pred_input, prediction_length=actual_horizon)
                     forecast_tensor = out[0] if isinstance(out, tuple) else out
                     median_pred = forecast_tensor.median(dim=0).values if forecast_tensor.ndim == 3 else forecast_tensor
-                    mse = torch.mean((median_pred.flatten()[:actual_horizon] - targets.flatten())**2).item()
+                    
+                    mse = torch.mean((median_pred.flatten()[:actual_horizon] - targets.flatten().to(device))**2).item()
                     
                     embs.append(raw_emb.cpu().to(torch.bfloat16))
                     mses.append(mse)
