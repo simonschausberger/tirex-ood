@@ -1,82 +1,76 @@
 import torch
-import tqdm
 import os
 import logging
 from src.utils import setup_logging
-from src.data_loader import get_ood_dataloader
 from src.feature_extractor import TiRexEmbedding
 from src.mahalanobis import Mahalanobis
-from src.config import (
-    REPO_CHRONOS, REPO_CHRONOS_EXTRA, REPO_GIFTEVAL_PRETRAIN,
-    CHRONOS_TRAIN, CHRONOS_TRAIN_EXTRA, GIFTEVAL_TRAIN
-)
 
-# initialize logging
+# setup logging
 setup_logging(log_name="compute_baseline")
 logger = logging.getLogger(__name__)
 
 def compute_baseline():
-    logger.info("Baseline process started...")
-    # setup environment
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    os.makedirs("outputs", exist_ok=True)
-    logger.info(f"Execution device: {device}")
-
-    # map repos to their specific configs
-    training_repo_map = {
-        REPO_CHRONOS: CHRONOS_TRAIN,
-        # chronos extra training dataset would require extra handling: "Dataset scripts are no longer supported, but found chronos_datasets_extra.py"
-        #REPO_CHRONOS_EXTRA: CHRONOS_TRAIN_EXTRA,
-        REPO_GIFTEVAL_PRETRAIN: GIFTEVAL_TRAIN
-    }
-
-    try:
-        # delete limit configs to use entire dataset
-        train_loader = get_ood_dataloader(training_repo_map, "train", limit_configs=2)
-    except Exception as e:
-        logger.error(f"Failed to initialize DataLoader: {e}", exc_info=True)
+    logger.info("Baseline process started from cache (Filtering enabled)...")
+    output_dir = "outputs"
+    cache_path = os.path.join(output_dir, "cache_parts", "cache_id_train.pt")
+    if not os.path.exists(cache_path):
+        logger.error(f"Cache file not found at {cache_path}!")
         return
 
-    # initialize TiRex and the Mahalanobis engine
-    logger.info("Initializing TiRex embedding extractor and Mahalanobis engine.")
-    embedder = TiRexEmbedding(device=device).eval()
-    detector = Mahalanobis()
+    # load the raw embeddings
+    logger.info(f"Loading cached embeddings from {cache_path}...")
+    group_data = torch.load(cache_path, map_location="cpu")
 
-    # feature extraction and online stats update
-    logger.info("Starting statistics accumulation on training distribution...")
-    with torch.no_grad():
-        for i, batch in enumerate(tqdm.tqdm(train_loader)):
-            inputs = batch["inputs"].to(device)
-            class_labels = batch["meta"]["class"]
-            
-            # extract features from last hidden layer
-            embeddings = embedder(inputs) 
-            
-            num_variates = inputs.shape[1]
-            # Repeat each label 'num_variates' times to match flattened embeddings
-            expanded_labels = [label for label in class_labels for _ in range(num_variates)]
+    # --- FILTER LOGIK START ---
+    excluded_subset = "azure_vm_traces_2017"
+    
+    raw_cache = {}
+    for name, content in group_data.items():
+        if name == excluded_subset:
+            logger.warning(f"⚠️ Excluding '{name}' from baseline calculation to prevent covariance distortion.")
+            continue
+        raw_cache[name] = content['embeddings']
+    # --- FILTER LOGIK ENDE ---
 
-            # update the statistics
-            detector.update(embeddings, expanded_labels)
+    # normalization configurations
+    norm_configs = [
+        {"use_l2": True,  "use_ln": True,  "name": "l2_ln"},
+        {"use_l2": False, "use_ln": False, "name": "raw"},
+        {"use_l2": True,  "use_ln": False, "name": "only_l2"},
+        {"use_l2": False, "use_ln": True,  "name": "only_ln"}
+    ]
+    
+    # hold the final results for all modes
+    multi_mode_results = {}
 
-            if i % 500 == 0:
-                logger.info(f"Step {i}: Total samples processed: {detector.n_total}")
-
-    # finalize covariance and inversion
-    logger.info("Finalizing covariance matrix and computing inversion")
-    detector.finalize()
-
-    # save the baseline
-    save_path = "outputs/baseline_stats.pt"
-    try:
-        torch.save({
+    for cfg in norm_configs:
+        logger.info(f"Processing {cfg['name']}")
+        
+        # apply static normalization
+        norm_data = {
+            name: TiRexEmbedding.apply_normalization(embs.float(), cfg['use_l2'], cfg['use_ln'])
+            for name, embs in raw_cache.items()
+        }
+        
+        # initialize detector and compute parameters
+        detector = Mahalanobis()
+        # Hier wird nun die verbesserte Pooled Covariance Methode genutzt
+        detector.compute_from_cache(norm_data)
+        
+        # store result
+        multi_mode_results[cfg['name']] = {
             "feature_dim": detector.feature_dim,
             "n_total": detector.n_total,
             "inv_cov": detector.inv_covariance_matrix,
             "means_tensor": detector.means_tensor,
             "class_names": detector.class_labels_sorted
-        }, save_path)
-        logger.info(f"Baseline statistics successfully saved to: {save_path}")
+        }
+
+    # save baselines
+    save_path = "outputs/baseline_stats.pt"
+    try:
+        torch.save(multi_mode_results, save_path)
+        logger.info(f"All baseline modes (without {excluded_subset}) successfully saved to: {save_path}")
     except Exception as e:
         logger.error(f"Error while saving baseline statistics: {e}")
 

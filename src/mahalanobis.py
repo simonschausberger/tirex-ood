@@ -1,118 +1,89 @@
 import torch
-import numpy as np
 import logging
+import os
 
-# logging setup
+# setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class Mahalanobis:
-    def __init__(self, feature_dim=512):
-        self.feature_dim = feature_dim
-
-        # class specific stats 
-        self.class_sums = {}
-        self.class_counts = {}
-        
-        # global stats
-        self.running_mean = torch.zeros(feature_dim, dtype=torch.bfloat16)
-        self.M2 = torch.zeros((feature_dim, feature_dim), dtype=torch.bfloat16)
-        self.n_total = 0
-        
-        # inverse shared covariance matrix
+    def __init__(self):
+        self.feature_dim = 0
         self.inv_covariance_matrix = None
-
-        # needed for vectorization (speed)
         self.means_tensor = None
-
         self.class_labels_sorted = None
+        self.n_total = 0
 
-
-    def update(self, embeddings, class_labels):
-        embeddings = embeddings.detach().to(torch.bfloat16)
-        # handle entire batch at once
-        batch_size = embeddings.size(0)
-
-        old_n = self.n_total
-        self.n_total += batch_size
-
-        batch_mean = torch.mean(embeddings, dim=0)
-        delta_batch = batch_mean - self.running_mean
-
-        centered_batch = embeddings - batch_mean
-        self.M2 += torch.mm(centered_batch.T, centered_batch)
-
-        if old_n > 0:
-            # update of M2 (Welford algorithm)
-            self.M2 += (old_n * batch_size / self.n_total) * torch.outer(delta_batch, delta_batch)
+    def compute_from_cache(self, raw_cache, shrinkage=1e-4):
+        logger.info("Computing Pooled Mahalanobis parameters (centered per class)...")
         
-        # update of global mean
-        self.running_mean += (batch_size / self.n_total) * delta_batch
-
-        # class-specific updates
-        # group batch by labels
-        unique_labels, labels_indices = np.unique(class_labels, return_inverse=True)
-        labels_indices = torch.from_numpy(labels_indices)
+        # 1. Dimensionen und Klassen bestimmen
+        self.class_labels_sorted = sorted(raw_cache.keys())
+        first_key = self.class_labels_sorted[0]
+        self.feature_dim = raw_cache[first_key].shape[-1]
         
-        for i, label in enumerate(unique_labels):
-            mask = (labels_indices == i)
-            label_data = embeddings[mask]
-            count = label_data.size(0)
-            
-            if label not in self.class_sums:
-                self.class_sums[label] = torch.zeros(self.feature_dim, dtype=torch.bfloat16)
-                self.class_counts[label] = 0
-            
-            # update sum and counts
-            self.class_sums[label] += torch.sum(label_data, dim=0)
-            self.class_counts[label] += count
-    
-
-    def finalize(self, shrinkage=1e-4):
-        if self.n_total < 2:
-            logger.error("Insufficient data to finalize statistics.")
-            raise ValueError(f"Insufficient data to compute covariance.")
-        
-        # covariance matrix
-        cov = self.M2 / (self.n_total - 1)
-
-        # apply shirnkage which pushes the matrix away from being singular
-        eye = torch.eye(self.feature_dim, dtype=torch.bfloat16)
-        avg_variance = torch.mean(torch.diag(cov))
-        cov = (1 - shrinkage) * cov + (shrinkage * avg_variance * eye)
-
-        # compute inverse of covariance matrix for Mahalanobis distance
-        self.inv_covariance_matrix = torch.inverse(cov)
-
-        # create means tensor sorted by class labels
-        self.class_labels_sorted = sorted(self.class_sums.keys())
+        # 2. Klassenmittelwerte berechnen
+        # Diese werden für die spätere Distanzberechnung benötigt
         self.means_tensor = torch.stack([
-            self.class_sums[l] / self.class_counts[l] for l in self.class_labels_sorted
+            torch.mean(raw_cache[label].to(torch.float32), dim=0) 
+            for label in self.class_labels_sorted
         ])
 
-    
+        # 3. Pooled Covariance berechnen (entsprechend deiner Formel)
+        all_centered_embs = []
+        self.n_total = 0
+        
+        for label in self.class_labels_sorted:
+            # Konvertierung zu float64 für maximale Präzision bei der Matrix-Inversion
+            embs = raw_cache[label].to(torch.float64)
+            mu_c = torch.mean(embs, dim=0)
+            
+            # Das ist das (phi(xi) - mu_c) aus deiner Formel:
+            centered = embs - mu_c 
+            
+            all_centered_embs.append(centered)
+            self.n_total += embs.size(0)
+
+        # Alle zentrierten Samples konkatenieren [N, FeatureDim]
+        X_centered = torch.cat(all_centered_embs, dim=0)
+        
+        # Berechnung: 1/N * sum( (x-mu)(x-mu)^T )
+        # Das Matrixprodukt X^T * X ergibt exakt die Summe der Außenprodukte
+        cov = torch.mm(X_centered.T, X_centered) / self.n_total
+        
+        # 4. Shrinkage (für numerische Stabilität bei der Inversion)
+        eye = torch.eye(self.feature_dim, dtype=torch.float64)
+        avg_variance = torch.mean(torch.diag(cov))
+        cov = (1 - shrinkage) * cov + (shrinkage * avg_variance * eye)
+        
+        # 5. Inversion der Kovarianzmatrix
+        self.inv_covariance_matrix = torch.inverse(cov).to(torch.float32)
+        
+        logger.info(f"Finalized statistics for {self.n_total} samples using POOLED covariance.")
+
     def get_score(self, embeddings):
         if self.inv_covariance_matrix is None:
-            logger.error("Please call finalize() before calculating scores.")
-            raise RuntimeError("Mahalanobis engine is not finalized. Call finalize() first.")
+            logger.error("Detector not finalized!")
+            raise RuntimeError("Mahalanobis engine is not initialized.")
 
-        embeddings = embeddings.detach().to(torch.bfloat16)
-        if embeddings.dim() == 1: 
-            embeddings = embeddings.unsqueeze(0)
+        embeddings = embeddings.detach().to("cpu", dtype=torch.float32)
         
-        # vectorized distance calculation to all classes simultaneously
+        if embeddings.dim() == 1:
+            embeddings = embeddings.unsqueeze(0)
+
+        # distance calculation to all classes simultaneously
         # delta shape: (BatchSize, NumClasses, FeatureDim)
         delta = embeddings.unsqueeze(1) - self.means_tensor.unsqueeze(0)
         
-        # matrix multiplication over the feature dimension
+        # Compute Mahalanobis distance: (x-mu)^T * Sigma^-1 * (x-mu)
+        # temp shape: (BatchSize, NumClasses, FeatureDim)
         temp = torch.matmul(delta, self.inv_covariance_matrix)
         
-        # element-wise product and sum yields the Mahalanobis distance
+        # summing across features to get final distance per class
         # distances shape: (BatchSize, NumClasses)
         distances = torch.sum(temp * delta, dim=-1)
 
-        # score is the negative distance to the nearest class
+        # OOD Score is the negative distance to the nearest class
         min_distances, _ = torch.min(distances, dim=1)
         
         return -min_distances
-        
