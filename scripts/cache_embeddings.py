@@ -24,38 +24,37 @@ def cache_all_groups():
     output_dir = "outputs/cache_parts"
     os.makedirs(output_dir, exist_ok=True)
     
-    # Initialize embedder
     embedder = TiRexEmbedding(device=device).eval()
     
-    # Configuration
+    # configuration
     TRAIN_LIMIT = 1000
     VAL_LIMIT = 200
     OOD_LIMIT = 1000
     TARGET_LEN = 2048 
 
-    # Define maps for ID and OOD
+    # define maps for ID and OOD
     id_map = {REPO_CHRONOS: CHRONOS_TRAIN, REPO_CHRONOS_EXTRA: CHRONOS_TRAIN_EXTRA, REPO_GIFTEVAL_PRETRAIN: GIFTEVAL_TRAIN}
     ood_map = {REPO_CHRONOS: CHRONOS_ZS_BENCHMARK, REPO_CHRONOS_EXTRA: CHRONOS_ZS_BENCHMARK_EXTRA, REPO_GIFTEVAL: GIFTEVAL_ZS_BENCHMARK}
 
-    # Cache paths
+    # cache paths
     train_path = os.path.join(output_dir, "cache_id_train.pt")
     val_path = os.path.join(output_dir, "cache_id_val.pt")
     ood_path = os.path.join(output_dir, "cache_ood_benchmark.pt")
 
-    # Load existing or create new
+    # load existing or create new
     train_data = torch.load(train_path, map_location="cpu") if os.path.exists(train_path) else {}
     val_data = torch.load(val_path, map_location="cpu") if os.path.exists(val_path) else {}
     ood_data = torch.load(ood_path, map_location="cpu") if os.path.exists(ood_path) else {}
 
-    # --- PART 1: ID DATA (Combined Pass) ---
-    logger.info("--- Processing ID Data (Single Pass: 1000 Train / 200 Val) ---")
+    # ID data
+    logger.info("Processing ID Data")
     for repo, subsets in id_map.items():
         for subset in subsets:
             if subset in train_data and subset in val_data:
                 logger.info(f"Skipping {subset} (already cached)")
                 continue
 
-            logger.info(f"Mining {subset} (Combined Pass)")
+            logger.info(f"Mining {subset}")
             loader = get_ood_dataloader({repo: [subset]}, split_mode="all", batch_size=1, target_len=TARGET_LEN)
             
             tr_embs, tr_mses = [], []
@@ -70,7 +69,7 @@ def cache_all_groups():
                 if is_val and len(vl_embs) >= VAL_LIMIT: continue
                 if not is_val and len(tr_embs) >= TRAIN_LIMIT: continue
 
-                # Move inputs/targets to GPU
+                # move inputs/targets to GPU
                 inputs = batch["inputs"].to(device)
                 targets = batch["targets"].to(device)
                 actual_horizon = targets.shape[-1]
@@ -89,13 +88,12 @@ def cache_all_groups():
                     median_pred = forecast_tensor.median(dim=0).values if forecast_tensor.ndim == 3 else forecast_tensor
                     flat_pred = median_pred.flatten()[:actual_horizon]
                     
-                    # --- SAFE MSE CALCULATION ON CPU ---
-                    # We move both to CPU and convert to float32 to avoid device/precision issues
+                    # move mse calculation to CPU to avoid device issues
                     p_cpu = flat_pred.detach().cpu().float()
                     t_cpu = targets.flatten().detach().cpu().float()
                     mse = torch.mean((p_cpu - t_cpu)**2).item()
                     
-                    # Prepare embedding for storage (CPU, bfloat16)
+                    # prepare embedding for storage
                     emb_cpu = raw_emb.cpu().to(torch.bfloat16)
 
                     if is_val:
@@ -108,7 +106,7 @@ def cache_all_groups():
                     pbar.update(1)
 
             pbar.close()
-            # Save both splits incrementally
+            # save both splits incrementally
             if tr_embs:
                 train_data[subset] = {"embeddings": torch.cat(tr_embs, dim=0), "mses": torch.tensor(tr_mses, dtype=torch.float32)}
                 torch.save(train_data, train_path)
@@ -117,8 +115,8 @@ def cache_all_groups():
                 torch.save(val_data, val_path)
             logger.info(f"Saved {subset}: Train({len(tr_embs)}) Val({len(vl_embs)})")
 
-    # --- PART 2: OOD BENCHMARK ---
-    logger.info("--- Processing OOD Benchmark (1000 samples) ---")
+    # OOD data
+    logger.info("Processing OOD Data")
     for repo, subsets in ood_map.items():
         for subset in subsets:
             if subset in ood_data:
@@ -147,7 +145,7 @@ def cache_all_groups():
                     median_pred = forecast_tensor.median(dim=0).values if forecast_tensor.ndim == 3 else forecast_tensor
                     flat_pred = median_pred.flatten()[:actual_horizon]
                     
-                    # --- SAFE MSE CALCULATION ON CPU ---
+                    # move MSE calculation to CPU
                     p_cpu = flat_pred.detach().cpu().float()
                     t_cpu = targets.flatten().detach().cpu().float()
                     mse = torch.mean((p_cpu - t_cpu)**2).item()
@@ -161,7 +159,7 @@ def cache_all_groups():
                 ood_data[subset] = {"embeddings": torch.cat(embs, dim=0), "mses": torch.tensor(mses, dtype=torch.float32)}
                 torch.save(ood_data, ood_path)
 
-    logger.info(f"Success! All data cached with safe CPU-MSE logic.")
+    logger.info(f"Success! All embeddings cached.")
 
 if __name__ == "__main__":
     cache_all_groups()

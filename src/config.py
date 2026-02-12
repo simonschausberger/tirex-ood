@@ -28,7 +28,7 @@ CHRONOS_ZS_BENCHMARK = [
     "m4_quarterly", "m4_yearly", "dominick", "m5", "monash_tourism_monthly", 
     "monash_tourism_quarterly", "monash_tourism_yearly", "monash_car_parts", "monash_hospital", 
     "monash_cif_2016", "monash_m1_yearly", "monash_m1_quarterly", "monash_m1_monthly", 
-    "mmonash_m3_monthly", "monash_m3_yearly", "monash_m3_quarterly"
+    "monash_m3_monthly", "monash_m3_yearly", "monash_m3_quarterly"
 ]
 
 # chronos OOD data extra
