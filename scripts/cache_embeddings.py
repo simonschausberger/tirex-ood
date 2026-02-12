@@ -23,6 +23,8 @@ def cache_all_groups():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = "outputs/cache_parts"
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Initialize embedder
     embedder = TiRexEmbedding(device=device).eval()
     
     # Configuration
@@ -68,20 +70,32 @@ def cache_all_groups():
                 if is_val and len(vl_embs) >= VAL_LIMIT: continue
                 if not is_val and len(tr_embs) >= TRAIN_LIMIT: continue
 
+                # Move inputs/targets to GPU
                 inputs = batch["inputs"].to(device)
                 targets = batch["targets"].to(device)
                 actual_horizon = targets.shape[-1]
                 if actual_horizon == 0: continue
 
                 with torch.no_grad():
+                    # feature extraction
                     raw_emb = embedder(inputs)
+                    
+                    # forecasting
                     pred_input = inputs.squeeze(1) if inputs.ndim == 3 else inputs
                     out = embedder.model.forecast(pred_input, prediction_length=actual_horizon)
                     forecast_tensor = out[0] if isinstance(out, tuple) else out
+                    
+                    # median calculation
                     median_pred = forecast_tensor.median(dim=0).values if forecast_tensor.ndim == 3 else forecast_tensor
                     flat_pred = median_pred.flatten()[:actual_horizon]
                     
-                    mse = torch.mean((flat_pred - targets.flatten().to(device))**2).item()
+                    # --- SAFE MSE CALCULATION ON CPU ---
+                    # We move both to CPU and convert to float32 to avoid device/precision issues
+                    p_cpu = flat_pred.detach().cpu().float()
+                    t_cpu = targets.flatten().detach().cpu().float()
+                    mse = torch.mean((p_cpu - t_cpu)**2).item()
+                    
+                    # Prepare embedding for storage (CPU, bfloat16)
                     emb_cpu = raw_emb.cpu().to(torch.bfloat16)
 
                     if is_val:
@@ -94,6 +108,7 @@ def cache_all_groups():
                     pbar.update(1)
 
             pbar.close()
+            # Save both splits incrementally
             if tr_embs:
                 train_data[subset] = {"embeddings": torch.cat(tr_embs, dim=0), "mses": torch.tensor(tr_mses, dtype=torch.float32)}
                 torch.save(train_data, train_path)
@@ -110,7 +125,7 @@ def cache_all_groups():
                 logger.info(f"Skipping {subset} (already cached)")
                 continue
 
-            logger.info(f"Mining OOD {subset}")
+            logger.info(f"Mining {subset} (OOD)")
             loader = get_ood_dataloader({repo: [subset]}, split_mode="train", batch_size=1, target_len=TARGET_LEN)
             
             embs, mses = [], []
@@ -118,7 +133,9 @@ def cache_all_groups():
             
             for batch in loader:
                 if len(embs) >= OOD_LIMIT: break
-                inputs, targets = batch["inputs"].to(device), batch["targets"].to(device)
+                
+                inputs = batch["inputs"].to(device)
+                targets = batch["targets"].to(device)
                 actual_horizon = targets.shape[-1]
                 if actual_horizon == 0: continue
 
@@ -128,8 +145,12 @@ def cache_all_groups():
                     out = embedder.model.forecast(pred_input, prediction_length=actual_horizon)
                     forecast_tensor = out[0] if isinstance(out, tuple) else out
                     median_pred = forecast_tensor.median(dim=0).values if forecast_tensor.ndim == 3 else forecast_tensor
+                    flat_pred = median_pred.flatten()[:actual_horizon]
                     
-                    mse = torch.mean((median_pred.flatten()[:actual_horizon] - targets.flatten().to(device))**2).item()
+                    # --- SAFE MSE CALCULATION ON CPU ---
+                    p_cpu = flat_pred.detach().cpu().float()
+                    t_cpu = targets.flatten().detach().cpu().float()
+                    mse = torch.mean((p_cpu - t_cpu)**2).item()
                     
                     embs.append(raw_emb.cpu().to(torch.bfloat16))
                     mses.append(mse)
@@ -140,7 +161,7 @@ def cache_all_groups():
                 ood_data[subset] = {"embeddings": torch.cat(embs, dim=0), "mses": torch.tensor(mses, dtype=torch.float32)}
                 torch.save(ood_data, ood_path)
 
-    logger.info(f"Success! All data cached.")
+    logger.info(f"Success! All data cached with safe CPU-MSE logic.")
 
 if __name__ == "__main__":
     cache_all_groups()
