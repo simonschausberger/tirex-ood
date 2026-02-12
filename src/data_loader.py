@@ -39,7 +39,7 @@ class TiRexStreamingDataset(IterableDataset):
 
     def _extract_actual_data(self, example):
         # most common fields for time series data
-        priority_keys = ['target', 'consumption_kW', 'item_data', 'values']
+        priority_keys = ['target', 'consumption_kW', 'item_data', 'values', 'price_mean']
         
         for key in priority_keys:
             if key in example and example[key] is not None:
