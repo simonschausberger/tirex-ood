@@ -10,9 +10,10 @@ setup_logging(log_name="compute_baseline")
 logger = logging.getLogger(__name__)
 
 def compute_baseline():
-    logger.info("Baseline process started from cache (Filtering enabled)...")
+    logger.info("Baseline process started from cache (All subsets included)...")
     output_dir = "outputs"
     cache_path = os.path.join(output_dir, "cache_parts", "cache_id_train.pt")
+    
     if not os.path.exists(cache_path):
         logger.error(f"Cache file not found at {cache_path}!")
         return
@@ -21,16 +22,9 @@ def compute_baseline():
     logger.info(f"Loading cached embeddings from {cache_path}...")
     group_data = torch.load(cache_path, map_location="cpu")
 
-    # --- FILTER LOGIK START ---
-    excluded_subset = "azure_vm_traces_2017"
-    
-    raw_cache = {}
-    for name, content in group_data.items():
-        if name == excluded_subset:
-            logger.warning(f"⚠️ Excluding '{name}' from baseline calculation to prevent covariance distortion.")
-            continue
-        raw_cache[name] = content['embeddings']
-    # --- FILTER LOGIK ENDE ---
+    # extract all embeddings
+    raw_cache = {name: content['embeddings'] for name, content in group_data.items()}
+    logger.info(f"Using {len(raw_cache)} subsets for baseline calculation.")
 
     # normalization configurations
     norm_configs = [
@@ -44,7 +38,7 @@ def compute_baseline():
     multi_mode_results = {}
 
     for cfg in norm_configs:
-        logger.info(f"Processing {cfg['name']}")
+        logger.info(f"Processing mode: {cfg['name']}")
         
         # apply static normalization
         norm_data = {
@@ -54,7 +48,7 @@ def compute_baseline():
         
         # initialize detector and compute parameters
         detector = Mahalanobis()
-        # Hier wird nun die verbesserte Pooled Covariance Methode genutzt
+        # Nutzt die verbesserte Pooled Covariance Methode
         detector.compute_from_cache(norm_data)
         
         # store result
@@ -70,7 +64,7 @@ def compute_baseline():
     save_path = "outputs/baseline_stats.pt"
     try:
         torch.save(multi_mode_results, save_path)
-        logger.info(f"All baseline modes (without {excluded_subset}) successfully saved to: {save_path}")
+        logger.info(f"All baseline modes successfully saved to: {save_path}")
     except Exception as e:
         logger.error(f"Error while saving baseline statistics: {e}")
 
