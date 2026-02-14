@@ -2,6 +2,7 @@ import torch
 import numpy as np
 from datasets import load_dataset
 from torch.utils.data import IterableDataset, DataLoader
+from itertools import chain
 import logging
 
 logger = logging.getLogger(__name__)
@@ -52,53 +53,44 @@ class TiRexStreamingDataset(IterableDataset):
 
     def __iter__(self):
         val_step = int(1 / self.val_ratio) if self.val_ratio > 0 else 5
-        
         for repo, configs in self.repo_map.items():
             for config in configs:
-                # load dataset in streaming mode
                 ds = load_dataset(repo, data_dir=config, split="train", streaming=True)
-                
-                # retrieve total number of series from dataset metadata
+                it = iter(ds)
                 try:
-                    total_rows = ds.info.splits['train'].num_examples
-                except Exception:
-                    total_rows = None
+                    # peek at the first sample's length
+                    first_example = next(it)
+                    first_data = self._extract_actual_data(first_example)
+                    first_len = len(first_data) if first_data is not None else 0
+                except StopIteration: continue
 
-                # calculate sampling factors based on available metadata
-                if total_rows and total_rows > self.total_samples_needed:
-                    # massive dataset: use striding to cover the full distribution
-                    skip_factor = max(1, total_rows // self.total_samples_needed)
-                    samples_per_series = 1
-                elif total_rows and total_rows > 0:
-                    # sparse dataset: draw multiple windows per series to fill the quota
-                    skip_factor = 1
-                    samples_per_series = int(np.ceil(self.total_samples_needed / total_rows))
+                # strategy is based on the length of the first sequence
+                if first_len > 100000:
+                    # extremely long series -> draw all needed windows from it
+                    skip_factor, samples_per_series = 1, self.total_samples_needed
+                    logger.info(f"[{config}] Multi-Crop Logic (Len: {first_len})")
                 else:
-                    # fallback for unknown stream lengths: moderate skip and adaptive draw
-                    skip_factor = 1
-                    samples_per_series = 10 
+                    # case: standard series -> stride through the stream for diversity
+                    skip_factor, samples_per_series = 10, 1
+                    logger.info(f"[{config}] Strided Logic (Len: {first_len})")
 
+                # chain back the first example and run the sampling loop
+                stream = chain([first_example], it)
                 samples_yielded = 0
-                for i, example in enumerate(ds):
+                for i, example in enumerate(stream):
                     if samples_yielded >= self.total_samples_needed: break
-                    # skip samples based on skip_factor for global representation
                     if i % skip_factor != 0: continue 
                     
                     data = self._extract_actual_data(example)
                     if data is None: continue
-
-                    # calculate remaining quota and current draw count
-                    remaining = self.total_samples_needed - samples_yielded
-                    # reduce draw count if stream proves to be long to ensure diversity
-                    current_draw_limit = samples_per_series if (total_rows or i < 100) else 1
-                    num_to_draw = max(1, min(remaining, current_draw_limit))
-
-                    for inputs, targets in self._process_series(data, num_to_draw):
-                        is_val = (samples_yielded % val_step == 0)
-                        if self.split_mode == "val" and not is_val: continue
-                        if self.split_mode == "train" and is_val: continue
-
-                        yield {"inputs": inputs, "targets": targets, "is_val": is_val, "subset": config}
+                    
+                    rem = self.total_samples_needed - samples_yielded
+                    for inputs, targets in self._process_series(data, min(rem, samples_per_series)):
+                        yield {
+                            "inputs": inputs, "targets": targets, 
+                            "is_val": (samples_yielded % val_step == 0), 
+                            "subset": config
+                        }
                         samples_yielded += 1
                         if samples_yielded >= self.total_samples_needed: break
 
