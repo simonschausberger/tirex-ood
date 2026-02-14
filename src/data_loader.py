@@ -25,10 +25,9 @@ class TiRexStreamingDataset(IterableDataset):
         return None
 
     def _process_series(self, series, num_windows):
-        # extract several random windows from a single time series to capture variance
+        # extraction logic: handles nan-padding for short or jump-sliding for long series
         try:
             ts = torch.tensor(series, dtype=torch.bfloat16)
-           
             if ts.ndim == 1: ts = ts.unsqueeze(0)
             
             seq_len = ts.shape[-1]
@@ -36,16 +35,21 @@ class TiRexStreamingDataset(IterableDataset):
 
             if seq_len < total_req:
                 pad_size = total_req - seq_len
-                # use nan filled tensor as a mask
+                # mask with NaNs for TiRex/xLSTM compatibility
                 padded = torch.full((ts.shape[0], total_req), float('nan'), dtype=torch.bfloat16)
                 padded[:, pad_size:] = ts
                 yield padded[:, :self.target_len], padded[:, self.target_len:]
 
             else:
-                # draw multiple crops for long series
+                # jump-sliding for long series
+                stride = 512 
                 max_start = seq_len - total_req
-                for _ in range(num_windows):
-                    start = np.random.randint(0, max_start + 1)
+                
+                possible_windows = (max_start // stride) + 1
+                windows_to_take = min(num_windows, possible_windows)
+                
+                for w in range(windows_to_take):
+                    start = w * stride
                     window = ts[:, start : start + total_req]
                     yield window[:, :self.target_len], window[:, self.target_len:]
         except Exception:
@@ -53,8 +57,10 @@ class TiRexStreamingDataset(IterableDataset):
 
     def __iter__(self):
         val_step = int(1 / self.val_ratio) if self.val_ratio > 0 else 5
+        
         for repo, configs in self.repo_map.items():
             for config in configs:
+                # dynamic dataset loading
                 if "Salesforce" in repo:
                     ds = load_dataset(repo, data_files={"train": f"{config}/**/*.arrow"}, split="train", streaming=True)
                 elif "chronos_datasets_extra" in repo:
@@ -62,41 +68,30 @@ class TiRexStreamingDataset(IterableDataset):
                 else:
                     ds = load_dataset(repo, data_dir=config, split="train", streaming=True)
                 
-                it = iter(ds)
-                try:
-                    # peek at the first sample's length
-                    first_example = next(it)
-                    first_data = self._extract_actual_data(first_example)
-                    first_len = len(first_data) if first_data is not None else 0
-                except StopIteration: continue
-
-                # strategy is based on the length of the first sequence
-                if first_len > 100000:
-                    # extremely long series -> draw all needed windows from it
-                    skip_factor, samples_per_series = 1, self.total_samples_needed
-                    logger.info(f"[{config}] Multi-Crop Logic (Len: {first_len})")
-                else:
-                    # case: standard series -> stride through the stream for diversity
-                    skip_factor, samples_per_series = 10, 1
-                    logger.info(f"[{config}] Strided Logic (Len: {first_len})")
-
-                # chain back the first example and run the sampling loop
-                stream = chain([first_example], it)
                 samples_yielded = 0
-                for i, example in enumerate(stream):
+                logger.info(f"--- Mining Subset: {config} ---")
+
+                for example in ds:
                     if samples_yielded >= self.total_samples_needed: break
-                    if i % skip_factor != 0: continue 
                     
                     data = self._extract_actual_data(example)
                     if data is None: continue
                     
+                    # try to fill the entire remaining quota from the current series
                     rem = self.total_samples_needed - samples_yielded
-                    for inputs, targets in self._process_series(data, min(rem, samples_per_series)):
+                    
+                    for inputs, targets in self._process_series(data, rem):
+                        is_val = (samples_yielded % val_step == 0)
+                        
+                        # split filtering
+                        if self.split_mode == "val" and not is_val: continue
+                        if self.split_mode == "train" and is_val: continue
+
                         yield {
                             "inputs": inputs, "targets": targets, 
-                            "is_val": (samples_yielded % val_step == 0), 
-                            "subset": config
+                            "is_val": is_val, "subset": config
                         }
+                        
                         samples_yielded += 1
                         if samples_yielded >= self.total_samples_needed: break
 
