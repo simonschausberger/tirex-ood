@@ -1,159 +1,107 @@
 import torch
-import torch.nn.functional as F
+import numpy as np
 from datasets import load_dataset
 from torch.utils.data import IterableDataset, DataLoader
 import logging
-import numpy as np
-import warnings
 
-# logging setup
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Mute noisy internal libraries to see actual errors
-logging.getLogger("datasets").setLevel(logging.ERROR)
-logging.getLogger("httpx").setLevel(logging.ERROR)
-
 class TiRexStreamingDataset(IterableDataset):
-    def __init__(self, repo_map: dict, target_len: int = 2048, prediction_len: int = 64, num_samples_per_series: int = 1, split_mode: str = "train", val_ratio: float = 0.2, limit_configs: int = None):
+    def __init__(self, repo_map, target_len=2048, prediction_len=64, total_samples_needed=1200, split_mode="all", val_ratio=0.2):
         super().__init__()
         self.repo_map = repo_map
         self.target_len = target_len
         self.prediction_len = prediction_len
-        self.num_samples_per_series = num_samples_per_series
+        self.total_samples_needed = total_samples_needed
         self.split_mode = split_mode
         self.val_ratio = val_ratio
-        
-        # collect the subsets
-        self.all_configs = []
-        for repo, allowed_configs in repo_map.items():
-            try:
-                i = 0
-                for c in allowed_configs:
-                    if limit_configs is not None and i >= limit_configs:
-                        break
-                    self.all_configs.append((repo, c))
-                    i += 1
-            except Exception as e:
-                logger.error(f"Could not load configs for {repo}: {e}")
 
     def _extract_actual_data(self, example):
-        # most common fields for time series data
-        priority_keys = ['target', 'consumption_kW', 'item_data', 'values', 'price_mean']
-        
-        for key in priority_keys:
+        # determine the data field based on common dataset schemas
+        for key in ['target', 'consumption_kW', 'values', 'price_mean', 'item_data']:
             if key in example and example[key] is not None:
-                data = example[key]
-                if isinstance(data, (list, np.ndarray, torch.Tensor)):
-                    return data
+                return example[key]
         return None
 
-    def _process_series(self, series):
+    def _process_series(self, series, num_windows):
+        # extract several random windows from a single time series to capture variance
         try:
             ts = torch.tensor(series, dtype=torch.bfloat16)
-        
-            # handle NaNs   
-            ts = torch.nan_to_num(ts, nan=0.0)
+           
+            if ts.ndim == 1: ts = ts.unsqueeze(0)
             
-            # ensure shape [Variates, TimeSteps]
-            if ts.ndim == 1:
-                ts = ts.unsqueeze(0)
-            elif ts.ndim > 2:
-                # in case of more dimension e.g. batch dimension 
-                ts = ts.view(-1, ts.shape[-1])
-                
-            # multivariate handling
-            if ts.shape[0] > 1:
-                ts = ts[0:1, :] 
-
-            # get the sequence length
             seq_len = ts.shape[-1]
-            total_required = self.target_len + self.prediction_len
+            total_req = self.target_len + self.prediction_len
 
-            # Handle sequences that are too short by zero-padding
-            if seq_len < total_required:
-                    pad_size = total_required - seq_len
-                    # Pad at the beginning (left padding)
-                    padded_ts = torch.zeros((ts.shape[0], total_required), dtype=torch.bfloat16)
-                    padded_ts[:, pad_size:] = ts
-                    
-                    # split into inputs (context) and targets (horizon)
-                    inputs = padded_ts[:, :self.target_len]
-                    targets = padded_ts[:, self.target_len:]
-                    yield inputs, targets
+            if seq_len < total_req:
+                pad_size = total_req - seq_len
+                # use nan filled tensor as a mask
+                padded = torch.full((ts.shape[0], total_req), float('nan'), dtype=torch.bfloat16)
+                padded[:, pad_size:] = ts
+                yield padded[:, :self.target_len], padded[:, self.target_len:]
+
             else:
-                    # random cropping applied to longer time series
-                    max_start = seq_len - total_required
-                    for _ in range(self.num_samples_per_series):
-                        start = np.random.randint(0, max_start + 1)
-                        full_window = ts[:, start : start + total_required]
-                        
-                        # split into inputs and targets
-                        inputs = full_window[:, :self.target_len]
-                        targets = full_window[:, self.target_len:]
-                        yield inputs, targets
-
-        except Exception as e:
-            logger.debug(f"Error processing series: {e}")
+                # draw multiple crops for long series
+                max_start = seq_len - total_req
+                for _ in range(num_windows):
+                    start = np.random.randint(0, max_start + 1)
+                    window = ts[:, start : start + total_req]
+                    yield window[:, :self.target_len], window[:, self.target_len:]
+        except Exception:
             return
 
     def __iter__(self):
-        val_step = int(1 / self.val_ratio) if self.val_ratio > 0 else 10**9
+        val_step = int(1 / self.val_ratio) if self.val_ratio > 0 else 5
         
-        for repo, config in self.all_configs:
-            ds = None
-            logger.info(f"Loading {repo} | subset: {config}")
-            
-            try:
-                if "Salesforce" in repo:
-                    ds = load_dataset(repo, data_files={"train": f"{config}/**/*.arrow"}, split="train", streaming=True)
-                elif "chronos_datasets_extra" in repo:
-                    ds = load_dataset(repo, name=config, split="train", streaming=True, revision="refs/pr/1")
-                else:
-                    ds = load_dataset(repo, data_dir=config, split="train", streaming=True)
+        for repo, configs in self.repo_map.items():
+            for config in configs:
+                # load dataset in streaming mode
+                ds = load_dataset(repo, data_dir=config, split="train", streaming=True)
                 
-                if ds is None: continue
+                # retrieve total number of series from dataset metadata
+                try:
+                    total_rows = ds.info.splits['train'].num_examples
+                except Exception:
+                    total_rows = None
 
+                # calculate sampling factors based on available metadata
+                if total_rows and total_rows > self.total_samples_needed:
+                    # massive dataset: use striding to cover the full distribution
+                    skip_factor = max(1, total_rows // self.total_samples_needed)
+                    samples_per_series = 1
+                elif total_rows and total_rows > 0:
+                    # sparse dataset: draw multiple windows per series to fill the quota
+                    skip_factor = 1
+                    samples_per_series = int(np.ceil(self.total_samples_needed / total_rows))
+                else:
+                    # fallback for unknown stream lengths: moderate skip and adaptive draw
+                    skip_factor = 1
+                    samples_per_series = 10 
+
+                samples_yielded = 0
                 for i, example in enumerate(ds):
-                    try:
-                        is_val_sample = (i % val_step == 0)
-                        
-                        # split filtering logic
-                        if self.split_mode != "all":
-                            if self.split_mode == "val" and not is_val_sample: continue
-                            if self.split_mode == "train" and is_val_sample: continue
-                            
-                        data = self._extract_actual_data(example)
-                        if data is None: continue
-                        
-                        metadata = {
-                            "repo": repo,
-                            "class": config,
-                            "id": str(example.get('id', example.get('item_id', 'unknown')))
-                        }
-                        
-                        for inputs, targets in self._process_series(data):
-                            yield {
-                                "inputs": inputs, 
-                                "targets": targets,
-                                "is_val": is_val_sample,
-                                "meta": metadata
-                            }
-                    except Exception as sample_err:
-                        logger.debug(f"Skipping sample {i} in {config}: {sample_err}")
-                        continue
+                    if samples_yielded >= self.total_samples_needed: break
+                    # skip samples based on skip_factor for global representation
+                    if i % skip_factor != 0: continue 
+                    
+                    data = self._extract_actual_data(example)
+                    if data is None: continue
 
-            except Exception as e:
-                logger.warning(f"Error in DataLoader when iterating over {repo}/{config}: {e}")
-                continue
+                    # calculate remaining quota and current draw count
+                    remaining = self.total_samples_needed - samples_yielded
+                    # reduce draw count if stream proves to be long to ensure diversity
+                    current_draw_limit = samples_per_series if (total_rows or i < 100) else 1
+                    num_to_draw = max(1, min(remaining, current_draw_limit))
 
+                    for inputs, targets in self._process_series(data, num_to_draw):
+                        is_val = (samples_yielded % val_step == 0)
+                        if self.split_mode == "val" and not is_val: continue
+                        if self.split_mode == "train" and is_val: continue
 
-def get_ood_dataloader(repo_map, split_mode, batch_size=64, target_len=2048, prediction_len=64, limit_configs=None):
-    dataset = TiRexStreamingDataset(
-        repo_map=repo_map, 
-        split_mode=split_mode, 
-        target_len=target_len, 
-        prediction_len=prediction_len, 
-        limit_configs=limit_configs
-    )
-    return DataLoader(dataset, batch_size=batch_size)
+                        yield {"inputs": inputs, "targets": targets, "is_val": is_val, "subset": config}
+                        samples_yielded += 1
+                        if samples_yielded >= self.total_samples_needed: break
+
+def get_ood_dataloader(repo_map, split_mode="all", batch_size=32):
+    dataset = TiRexStreamingDataset(repo_map=repo_map, split_mode=split_mode)
+    return DataLoader(dataset, batch_size=batch_size, num_workers=2)
