@@ -97,4 +97,4 @@ class TiRexStreamingDataset(IterableDataset):
 
 def get_ood_dataloader(repo_map, split_mode="all", batch_size=32):
     dataset = TiRexStreamingDataset(repo_map=repo_map, split_mode=split_mode)
-    return DataLoader(dataset, batch_size=batch_size, num_workers=2)
+    return DataLoader(dataset, batch_size=batch_size)
