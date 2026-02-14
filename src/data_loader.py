@@ -19,7 +19,7 @@ class TiRexStreamingDataset(IterableDataset):
 
     def _extract_actual_data(self, example):
         # determine the data field based on common dataset schemas
-        for key in ['target', 'consumption_kW', 'values', 'price_mean', 'item_data']:
+        for key in ['target', 'consumption_kW', 'values', 'price_mean', 'item_data', 'power_mw', 'state', 't_mean', 'temperature', 'generation_biomass']:
             if key in example and example[key] is not None:
                 return example[key]
         return None
@@ -55,7 +55,13 @@ class TiRexStreamingDataset(IterableDataset):
         val_step = int(1 / self.val_ratio) if self.val_ratio > 0 else 5
         for repo, configs in self.repo_map.items():
             for config in configs:
-                ds = load_dataset(repo, data_dir=config, split="train", streaming=True)
+                if "Salesforce" in repo:
+                    ds = load_dataset(repo, data_files={"train": f"{config}/**/*.arrow"}, split="train", streaming=True)
+                elif "chronos_datasets_extra" in repo:
+                    ds = load_dataset(repo, name=config, split="train", streaming=True, revision="refs/pr/1")
+                else:
+                    ds = load_dataset(repo, data_dir=config, split="train", streaming=True)
+                
                 it = iter(ds)
                 try:
                     # peek at the first sample's length

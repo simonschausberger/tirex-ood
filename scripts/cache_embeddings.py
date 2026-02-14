@@ -11,6 +11,13 @@ from src.config import (
     CHRONOS_ZS_BENCHMARK, GIFTEVAL_ZS_BENCHMARK, CHRONOS_ZS_BENCHMARK_EXTRA
 )
 
+# suppress noisy http and dataset logging
+logging.getLogger("datasets").setLevel(logging.ERROR)
+logging.getLogger("urllib3").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("fsspec").setLevel(logging.ERROR)
+
+# setup logging
 setup_logging(log_name="cache_all_groups_final")
 logger = logging.getLogger(__name__)
 
@@ -62,9 +69,14 @@ def cache_all_groups():
                     key = "id_train" if group_name == "ID" else "ood_benchmark"
                     caches[key][subset] = {"embeddings": torch.cat(tr_embs, 0)}
                     torch.save(caches[key], paths[key])
+                    # log the number of extracted embeddings for train/ood
+                    logger.info(f"Extracted {len(tr_embs)} embeddings for {subset} ({key})")
+
                 if vl_embs:
                     caches["id_val"][subset] = {"embeddings": torch.cat(vl_embs, 0)}
                     torch.save(caches["id_val"], paths["id_val"])
+                    # log the number of extracted embeddings for validation
+                    logger.info(f"Extracted {len(vl_embs)} validation embeddings for {subset}")
 
     logger.info("Caching complete.")
 
