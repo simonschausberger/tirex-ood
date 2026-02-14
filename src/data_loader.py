@@ -41,8 +41,8 @@ class TiRexStreamingDataset(IterableDataset):
                 yield padded[:, :self.target_len], padded[:, self.target_len:]
 
             else:
-                # jump-sliding for long series
-                stride = 512 
+                # jump-sliding for longer series
+                stride = 64 
                 max_start = seq_len - total_req
                 
                 possible_windows = (max_start // stride) + 1

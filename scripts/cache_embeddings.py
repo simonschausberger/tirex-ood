@@ -40,13 +40,21 @@ def cache_all_groups():
         logger.info(f"Processing {group_name} data")
         for repo, subsets in current_map.items():
             for subset in subsets:
-                if group_name == "ID" and subset in caches["id_train"]: continue
-                if group_name == "OOD" and subset in caches["ood_benchmark"]: continue
+                if group_name == "ID" and subset in caches["id_train"]:
+                    logger.info(f"Skipping {subset} ({group_name}) - already in cache.")
+                    continue
+                if group_name == "OOD" and subset in caches["ood_benchmark"]:
+                    logger.info(f"Skipping {subset} ({group_name}) - already in cache.")
+                    continue
 
                 loader = get_ood_dataloader({repo: [subset]}, batch_size=32)
                 tr_embs, vl_embs = [], []
                 
-                for batch in tqdm.tqdm(loader, desc=f"{group_name}: {subset}"):
+                # set total batches for progress bar visibility (1200 / 32 ~= 38)
+                total_est = 38 if group_name == "ID" else 32
+                pbar = tqdm.tqdm(loader, total=total_est, desc=f"{group_name}: {subset}", dynamic_ncols=True)
+                
+                for batch in pbar:
                     # break if limits are reached (1000 for Train/OOD, 200 for Val)
                     if group_name == "ID" and len(tr_embs) >= 1000 and len(vl_embs) >= 200: break
                     if group_name == "OOD" and len(tr_embs) >= 1000: break
@@ -64,6 +72,11 @@ def cache_all_groups():
                                 elif not is_val and len(tr_embs) < 1000: tr_embs.append(emb)
                             else:
                                 if len(tr_embs) < 1000: tr_embs.append(emb)
+                    
+                    # update progress bar with current counts
+                    pbar.set_postfix({"tr": len(tr_embs), "vl": len(vl_embs)})
+
+                pbar.close()
 
                 if tr_embs:
                     key = "id_train" if group_name == "ID" else "ood_benchmark"
