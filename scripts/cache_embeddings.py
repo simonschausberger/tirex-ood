@@ -80,7 +80,7 @@ def cache_all_groups():
                             preds_list.append(mean)
 
                         # stack predictions
-                        predictions = torch.stack(preds_list, dim=1)
+                        predictions = torch.stack(preds_list, dim=1).to(targets.device)
                         # calculate mse between targets and predictions
                         batch_mses = F.mse_loss(predictions, targets, reduction='none').mean(dim=(1, 2)).cpu()
 
