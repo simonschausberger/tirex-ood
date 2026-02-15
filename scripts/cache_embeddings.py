@@ -71,7 +71,6 @@ def cache_all_groups():
                         
                         # calculate predictions
                         preds_list = []
-                        
                         horizon_len = targets.shape[2]
                         for var_slice in torch.unbind(inputs, dim=1):
                             _, mean = embedder.model.forecast(var_slice, prediction_length=horizon_len)

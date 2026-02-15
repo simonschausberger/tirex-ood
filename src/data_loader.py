@@ -19,7 +19,7 @@ class TiRexStreamingDataset(IterableDataset):
 
     def _extract_actual_data(self, example):
         # determine the data field based on common dataset schemas
-        for key in ['target', 'consumption_kW', 'values', 'price_mean', 'item_data', 'power_mw', 'state', 't_mean', 'temperature', 'generation_biomass']:
+        for key in ['target', 'consumption_kW', 'values', 'price_mean', 'item_data', 'power_mw', 'PRCP', 't_mean', 'temperature', 'generation_biomass']:
             if key in example and example[key] is not None:
                 return example[key]
         return None
