@@ -29,14 +29,13 @@ def cache_all_groups():
     embedder = TiRexEmbedding(device=device).eval()
     
     # define dataset groupings for ID and OOD
-    id_map = {#REPO_CHRONOS: CHRONOS_TRAIN, 
-        REPO_CHRONOS_EXTRA: CHRONOS_TRAIN_EXTRA, 
-        #REPO_GIFTEVAL_PRETRAIN: GIFTEVAL_TRAIN
-        }
-    ood_map = {#REPO_CHRONOS: CHRONOS_ZS_BENCHMARK, 
-        REPO_CHRONOS_EXTRA: CHRONOS_ZS_BENCHMARK_EXTRA, 
-        #REPO_GIFTEVAL: GIFTEVAL_ZS_BENCHMARK
-        }
+    id_map = {REPO_CHRONOS: CHRONOS_TRAIN, 
+              REPO_CHRONOS_EXTRA: CHRONOS_TRAIN_EXTRA, 
+              REPO_GIFTEVAL_PRETRAIN: GIFTEVAL_TRAIN}
+    
+    ood_map = {REPO_CHRONOS: CHRONOS_ZS_BENCHMARK, 
+               REPO_CHRONOS_EXTRA: CHRONOS_ZS_BENCHMARK_EXTRA, 
+               REPO_GIFTEVAL: GIFTEVAL_ZS_BENCHMARK}
 
     # caching paths and initialization
     paths = {k: os.path.join(output_dir, f"cache_{k}.pt") for k in ["id_train", "id_val", "ood_benchmark"]}
