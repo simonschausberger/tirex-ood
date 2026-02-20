@@ -46,7 +46,7 @@ class TiRexStreamingDataset(IterableDataset):
 
             else:
                 # jump-sliding for longer series
-                stride = 16 
+                stride = 64 
                 max_start = seq_len - total_req
                 
                 possible_windows = (max_start // stride) + 1
