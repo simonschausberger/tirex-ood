@@ -5,6 +5,7 @@ pandas
 scipy
 scikit-learn
 tqdm
-datasets
+datasets<3.0.0
 huggingface-hub
+kaggle
 git+https://github.com/NX-AI/tirex.git

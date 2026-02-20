@@ -1,14 +1,18 @@
 import torch
-import numpy as np
+import os
+import logging
 from datasets import load_dataset
 from torch.utils.data import IterableDataset, DataLoader
-from itertools import chain
-import logging
 
+# Kaggle setup for extra chronos datasets
+os.environ["KAGGLE_CONFIG_DIR"] = ".kaggle"
+os.environ["HF_DATASETS_TRUST_REMOTE_CODE"] = "1"
+
+# setup logging
 logger = logging.getLogger(__name__)
 
 class TiRexStreamingDataset(IterableDataset):
-    def __init__(self, repo_map, target_len=2048, prediction_len=64, total_samples_needed=1200, split_mode="all", val_ratio=0.2):
+    def __init__(self, repo_map, target_len=2048, prediction_len=64, total_samples_needed=1500, split_mode="all", val_ratio=0.2):
         super().__init__()
         self.repo_map = repo_map
         self.target_len = target_len
@@ -19,7 +23,7 @@ class TiRexStreamingDataset(IterableDataset):
 
     def _extract_actual_data(self, example):
         # determine the data field based on common dataset schemas
-        for key in ['target', 'consumption_kW', 'values', 'price_mean', 'item_data', 'power_mw', 'PRCP', 't_mean', 'temperature', 'generation_biomass']:
+        for key in ['target', 'consumption_kW', 'values', 'price_mean', 'item_data', 'power_mw', 'PRCP', 't_mean', 'temperature', 'generation_biomass', 'HUFL']:
             if key in example and example[key] is not None:
                 return example[key]
         return None
@@ -64,7 +68,7 @@ class TiRexStreamingDataset(IterableDataset):
                 if "Salesforce" in repo:
                     ds = load_dataset(repo, data_files={"train": f"{config}/**/*.arrow"}, split="train", streaming=True)
                 elif "chronos_datasets_extra" in repo:
-                    ds = load_dataset(repo, name=config, split="train", streaming=True, revision="refs/pr/1")
+                    ds = load_dataset(repo, name=config, split="train", streaming=True, trust_remote_code=True)
                 else:
                     ds = load_dataset(repo, data_dir=config, split="train", streaming=True)
                 
