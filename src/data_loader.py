@@ -12,7 +12,7 @@ os.environ["HF_DATASETS_TRUST_REMOTE_CODE"] = "1"
 logger = logging.getLogger(__name__)
 
 class TiRexStreamingDataset(IterableDataset):
-    def __init__(self, repo_map, target_len=2048, prediction_len=64, total_samples_needed=1500, split_mode="all", val_ratio=0.2):
+    def __init__(self, repo_map, target_len=2048, prediction_len=8, total_samples_needed=1500, split_mode="all", val_ratio=0.2):
         super().__init__()
         self.repo_map = repo_map
         self.target_len = target_len
@@ -46,7 +46,7 @@ class TiRexStreamingDataset(IterableDataset):
 
             else:
                 # jump-sliding for longer series
-                stride = 64 
+                stride = 16 
                 max_start = seq_len - total_req
                 
                 possible_windows = (max_start // stride) + 1
