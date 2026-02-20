@@ -5,7 +5,7 @@ from datasets import load_dataset
 from torch.utils.data import IterableDataset, DataLoader
 
 # Kaggle setup for extra chronos datasets
-os.environ["KAGGLE_CONFIG_DIR"] = ".kaggle"
+os.environ["KAGGLE_CONFIG_DIR"] = "kaggle"
 os.environ["HF_DATASETS_TRUST_REMOTE_CODE"] = "1"
 
 # setup logging
