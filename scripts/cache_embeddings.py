@@ -45,12 +45,19 @@ def cache_all_groups():
     for group_name, current_map in [("ID", id_map), ("OOD", ood_map)]:
         logger.info(f"Processing {group_name} data")
         for repo, subsets in current_map.items():
+            
+            # identify prefix based on repository
+            prefix = "c_" if "chronos" in repo.lower() else "g_"
+            
             for subset in subsets:
-                if group_name == "ID" and subset in caches["id_train"]:
-                    logger.info(f"Skipping {subset} ({group_name}) - already in cache.")
+                # create prefixed subset name for caching
+                prefixed_subset = f"{prefix}{subset}"
+                
+                if group_name == "ID" and prefixed_subset in caches["id_train"]:
+                    logger.info(f"Skipping {prefixed_subset} ({group_name}) - already in cache.")
                     continue
-                if group_name == "OOD" and subset in caches["ood_benchmark"]:
-                    logger.info(f"Skipping {subset} ({group_name}) - already in cache.")
+                if group_name == "OOD" and prefixed_subset in caches["ood_benchmark"]:
+                    logger.info(f"Skipping {prefixed_subset} ({group_name}) - already in cache.")
                     continue
 
                 loader = get_ood_dataloader({repo: [subset]}, batch_size=32)
@@ -59,7 +66,7 @@ def cache_all_groups():
                 
                 # set total batches for progress bar visibility (1200 / 32 ~= 38)
                 total_est = 38 if group_name == "ID" else 32
-                pbar = tqdm.tqdm(loader, total=total_est, desc=f"{group_name}: {subset}", dynamic_ncols=True)
+                pbar = tqdm.tqdm(loader, total=total_est, desc=f"{group_name}: {prefixed_subset}", dynamic_ncols=True)
                 
                 for batch in pbar:
                     # break if limits are reached (1000 for Train/OOD, 200 for Val)
@@ -112,22 +119,22 @@ def cache_all_groups():
 
                 if train_embs:
                     key = "id_train" if group_name == "ID" else "ood_benchmark"
-                    caches[key][subset] = {
+                    caches[key][prefixed_subset] = {
                         "embeddings": torch.cat(train_embs, 0),
                         "mses": torch.cat(train_mses, 0)
                     }
                     torch.save(caches[key], paths[key])
                     # log the number of extracted embeddings for train/ood
-                    logger.info(f"Extracted {len(train_embs)} embeddings for {subset} ({key})")
+                    logger.info(f"Extracted {len(train_embs)} embeddings for {prefixed_subset} ({key})")
 
                 if val_embs:
-                    caches["id_val"][subset] = {
+                    caches["id_val"][prefixed_subset] = {
                         "embeddings": torch.cat(val_embs, 0),
                         "mses": torch.cat(val_mses, 0) 
                     }
                     torch.save(caches["id_val"], paths["id_val"])
                     # log the number of extracted embeddings for validation
-                    logger.info(f"Extracted {len(val_embs)} validation embeddings for {subset}")
+                    logger.info(f"Extracted {len(val_embs)} validation embeddings for {prefixed_subset}")
 
     logger.info("Caching complete.")
 
