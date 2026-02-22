@@ -61,8 +61,8 @@ def cache_all_groups():
                     continue
 
                 loader = get_ood_dataloader({repo: [subset]}, batch_size=32)
-                train_embs, train_mses, train_mases = [], []
-                val_embs, val_mses, val_mases = [], []
+                train_embs, train_mses, train_mases = [], [], []
+                val_embs, val_mses, val_mases = [], [], []
                 
                 # set total batches for progress bar visibility (1200 / 32 ~= 38)
                 total_est = 38 if group_name == "ID" else 32
