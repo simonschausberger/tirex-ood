@@ -61,8 +61,8 @@ def cache_all_groups():
                     continue
 
                 loader = get_ood_dataloader({repo: [subset]}, batch_size=32)
-                train_embs, train_mses = [], []
-                val_embs, val_mses = [], []
+                train_embs, train_mses, train_mases = [], []
+                val_embs, val_mses, val_mases = [], []
                 
                 # set total batches for progress bar visibility (1200 / 32 ~= 38)
                 total_est = 38 if group_name == "ID" else 32
@@ -92,25 +92,36 @@ def cache_all_groups():
 
                         # stack predictions
                         predictions = torch.stack(preds_list, dim=1).to(targets.device)
-                        # calculate mse between targets and predictions
+
+                        # MASE calculation
+                        model_mae = torch.abs(predictions - targets).mean(dim=(1, 2))
+                        last_observed = inputs[:, :, -1:]
+                        naive_mae = torch.abs(last_observed - targets).mean(dim=(1, 2))
+                        batch_mases = (model_mae / (naive_mae + 1e-8)).cpu()
+
+                        # MSE calculation
                         batch_mses = F.mse_loss(predictions, targets, reduction='none').mean(dim=(1, 2)).cpu()
 
                         for i in range(inputs.size(0)):
                             is_val = batch["is_val"][i].item()
                             emb = raw_embs[i].unsqueeze(0)
                             mse = batch_mses[i].unsqueeze(0)
+                            mase = batch_mases[i].unsqueeze(0)
 
                             if group_name == "ID":
                                 if is_val and len(val_embs) < 200: 
                                     val_embs.append(emb)
                                     val_mses.append(mse)
+                                    val_mases.append(mase)
                                 elif not is_val and len(train_embs) < 1000: 
                                     train_embs.append(emb)
                                     train_mses.append(mse)
+                                    train_mases.append(mase)
                             else:
                                 if len(train_embs) < 1000: 
                                     train_embs.append(emb)
                                     train_mses.append(mse)
+                                    train_mases.append(mase)
                     
                     # update progress bar with current counts
                     pbar.set_postfix({"train": len(train_embs), "val": len(val_embs)})
@@ -121,7 +132,8 @@ def cache_all_groups():
                     key = "id_train" if group_name == "ID" else "ood_benchmark"
                     caches[key][prefixed_subset] = {
                         "embeddings": torch.cat(train_embs, 0),
-                        "mses": torch.cat(train_mses, 0)
+                        "mses": torch.cat(train_mses, 0),
+                        "mases": torch.cat(train_mases, 0)
                     }
                     torch.save(caches[key], paths[key])
                     # log the number of extracted embeddings for train/ood
@@ -130,7 +142,8 @@ def cache_all_groups():
                 if val_embs:
                     caches["id_val"][prefixed_subset] = {
                         "embeddings": torch.cat(val_embs, 0),
-                        "mses": torch.cat(val_mses, 0) 
+                        "mses": torch.cat(val_mses, 0),
+                        "mases": torch.cat(val_mases, 0)
                     }
                     torch.save(caches["id_val"], paths["id_val"])
                     # log the number of extracted embeddings for validation
