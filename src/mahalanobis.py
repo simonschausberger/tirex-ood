@@ -14,7 +14,7 @@ class Mahalanobis:
         self.n_total = 0
 
     def compute_from_cache(self, raw_cache, shrinkage=1e-4):
-        logger.info("Computing Pooled Mahalanobis parameters...")
+        logger.info("Computing Mahalanobis parameters...")
         
         # determine dimensions
         self.class_labels_sorted = sorted(raw_cache.keys())

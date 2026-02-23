@@ -43,7 +43,8 @@ def run_scoring():
         for subset_name, content in group_cache.items():
             raw_embeddings = content['embeddings'].float()
             mses = content['mses'].numpy()
-            n_samples = len(mses)
+            mases = content['mases'].numpy()
+            n_samples = len(raw_embeddings)
             
             for mode_name, stats in all_baselines.items():
                 # initialize Mahalanobis class
@@ -67,6 +68,7 @@ def run_scoring():
                         "subset": subset_name,
                         "sample_idx": i,
                         "mse": mses[i],
+                        "mase": mases[i],
                         "ood_score": scores[i],
                         "norm_mode": mode_name
                     })
