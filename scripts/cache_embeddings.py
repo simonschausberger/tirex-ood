@@ -95,9 +95,9 @@ def cache_all_groups():
 
                         # MASE calculation
                         model_mae = torch.abs(predictions - targets).mean(dim=(1, 2))
-                        last_observed = inputs[:, :, -1:]
-                        naive_mae = torch.abs(last_observed - targets).mean(dim=(1, 2))
-                        batch_mases = (model_mae / (naive_mae + 1e-8)).cpu()
+                        diffs = torch.abs(inputs[:, :, 1:] - inputs[:, :, :-1])
+                        historical_naive_mae = diffs.mean(dim=(1, 2))
+                        batch_mases = (model_mae / (historical_naive_mae + 1e-5))
 
                         # MSE calculation
                         batch_mses = F.mse_loss(predictions, targets, reduction='none').mean(dim=(1, 2)).cpu()
