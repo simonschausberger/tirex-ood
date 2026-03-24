@@ -11,10 +11,16 @@ from tirex.util import nanmax, nanmin, nanstd
 
 class TiRexEmbedding(nn.Module):
     def __init__(
-        self, device: str | None = None, data_augmentation: bool = False, batch_size: int = 512, compile: bool = False
+        self,
+        device: str | None = None,
+        data_augmentation: bool = False,
+        extract_all_layers: bool = False,
+        batch_size: int = 512,
+        compile: bool = False,
     ) -> None:
         super().__init__()
         self.data_augmentation = data_augmentation
+        self.extract_all_layers = extract_all_layers
         self.number_of_patches = 8
         self.batch_size = batch_size
 
@@ -47,7 +53,11 @@ class TiRexEmbedding(nn.Module):
         embedding = torch.stack(
             [self._gen_emb_batched(var_slice) for var_slice in torch.unbind(data, dim=1)], dim=1
         )  # Stack in case of multivar
-        embedding = self.process_embedding(embedding, n_patches)
+        
+        if self.extract_all_layers:
+            embedding = self.process_embedding_all_layers(embedding, n_patches)
+        else:
+            embedding = self.process_embedding(embedding, n_patches)
 
         if self.data_augmentation:
             # Difference Embedding
@@ -55,9 +65,14 @@ class TiRexEmbedding(nn.Module):
             n_patches = self._calculate_n_patches(diff_data)
 
             diff_embedding = torch.stack(
-                [self._gen_emb_batched(var_slice) for var_slice in torch.unbind(diff_data, dim=1)], dim=1
+                [self._gen_emb_batched(diff_data_var) for diff_data_var in torch.unbind(diff_data, dim=1)], dim=1
             )
-            diff_embedding = self.process_embedding(diff_embedding, n_patches)
+            
+            if self.extract_all_layers:
+                diff_embedding = self.process_embedding_all_layers(diff_embedding, n_patches)
+            else:
+                diff_embedding = self.process_embedding(diff_embedding, n_patches)
+                
             embedding = torch.cat((diff_embedding, embedding), dim=-1)
 
             # Stats Embedding
@@ -86,6 +101,25 @@ class TiRexEmbedding(nn.Module):
         embedding = embedding.view(bs * var_dim, emb_dim)
         # shape: (bs * var_dim, emb_dim)
         
+        return embedding
+    
+    def process_embedding_all_layers(self, embedding: torch.Tensor, n_patches: int) -> torch.Tensor:
+        # embedding shape: (bs, var_dim, n_patches, n_layer, emb_dim)
+        # slice relevant patches
+        embedding = embedding[:, :, -n_patches:, :, :]
+        # shape: (bs, var_dim, n_patches, n_layer, emb_dim)
+        
+        # mean pool over the patches
+        embedding = torch.mean(embedding, dim=2)
+        # shape becomes: (bs, var_dim, n_layer, emb_dim)
+
+        # reshape to treat variates as independent and combine all layers into features
+        bs, var_dim, n_layer, emb_dim = embedding.shape
+    
+        # move variates to batch and combine (n_layer * emb_dim) into one long feature vector    
+        embedding = embedding.reshape(bs * var_dim, n_layer * emb_dim)
+        # shape: (bs * var_dim, n_layer * emb_dim)
+
         return embedding
 
     @staticmethod

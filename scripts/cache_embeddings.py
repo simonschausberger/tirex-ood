@@ -26,7 +26,7 @@ def cache_all_groups():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = "outputs/cache_parts"
     os.makedirs(output_dir, exist_ok=True)
-    embedder = TiRexEmbedding(device=device).eval()
+    embedder = TiRexEmbedding(device=device, extract_all_layers=True).eval()
     
     # define dataset groupings for ID and OOD
     id_map = {REPO_CHRONOS: CHRONOS_TRAIN, 
