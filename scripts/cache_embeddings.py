@@ -94,10 +94,14 @@ def cache_all_groups():
                         predictions = torch.stack(preds_list, dim=1).to(targets.device)
 
                         # MASE calculation
-                        model_mae = torch.abs(predictions - targets).mean(dim=(1, 2))
-                        diffs = torch.abs(inputs[:, :, 1:] - inputs[:, :, :-1])
-                        historical_naive_mae = diffs.mean(dim=(1, 2))
-                        batch_mases = (model_mae / (historical_naive_mae + 1e-5))
+                        num = torch.abs(predictions - targets).mean(dim=2)
+                        # not considering seasonality for simplicity
+                        den = torch.abs(inputs[:, :, 1:] - inputs[:, :, :-1]).nanmean(dim=2)
+                        # mask invalid denominators
+                        valid = den > 0
+                        mase_per_var = torch.where(valid, num / den, torch.nan)
+                        # take mean across variables
+                        batch_mases = torch.nanmean(mase_per_var, dim=1)
 
                         # MSE calculation
                         batch_mses = F.mse_loss(predictions, targets, reduction='none').mean(dim=(1, 2)).cpu()
