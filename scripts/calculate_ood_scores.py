@@ -41,8 +41,8 @@ def run_scoring():
 
         for subset_name, content in group_cache.items():
             raw_embeddings = content['embeddings'].float()
-            mses = content['mses'].numpy()
-            mases = content['mases'].numpy()
+            mses = content['mses'].cpu().numpy()
+            mases = content['mases'].cpu().numpy()
             n_samples = len(raw_embeddings)
             
             for mode_name, stats in all_baselines.items():
@@ -57,7 +57,7 @@ def run_scoring():
                 norm_embs = TiRexEmbedding.apply_normalization(raw_embeddings, use_l2=use_l2, use_ln=use_ln)
                 
                 # calculate OOD scores
-                scores = detector.get_score(norm_embs).numpy()
+                scores = detector.get_score(norm_embs).cpu().numpy()
                 
                 logger.debug(f"Computed {mode_name} scores for {subset_name}")
 
