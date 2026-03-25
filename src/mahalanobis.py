@@ -62,7 +62,8 @@ class Mahalanobis:
             logger.error("Detector not finalized!")
             raise RuntimeError("Mahalanobis engine is not initialized.")
 
-        embeddings = embeddings.detach().to("cpu", dtype=torch.float32)
+        target_device = self.inv_covariance_matrix.device
+        embeddings = embeddings.to(target_device, dtype=torch.float32)
         
         if embeddings.dim() == 1:
             embeddings = embeddings.unsqueeze(0)
