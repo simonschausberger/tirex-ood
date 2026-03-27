@@ -48,6 +48,7 @@ class TiRexEmbedding(nn.Module):
 
 
     def forward(self, data: torch.Tensor) -> torch.Tensor:
+        bs, variates, _ = data.shape
         n_patches = self._calculate_n_patches(data)
 
         embedding = torch.stack(
@@ -79,6 +80,7 @@ class TiRexEmbedding(nn.Module):
             stat_features = self._generate_stats_features(data)
             normalized_stats = self._normalize_stats(stat_features)
             normalized_stats = normalized_stats.to(embedding.device)
+            normalized_stats = normalized_stats.view(bs * variates, -1)
 
             # Concat all together
             embedding = torch.cat((embedding, normalized_stats), dim=-1)
