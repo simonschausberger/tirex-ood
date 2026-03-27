@@ -30,8 +30,21 @@ The OOD detection process is divided into these main steps:
 
 ### 1. Cache Embeddings
 Extract and save embeddings for both ID and OOD datasets. This step can be time-consuming as it involves model inference.
+
+When calling the script, it is possible to customize the feature extraction depth and complexity using command-line arguments:
+- **--cache_all_layers**: instead of extracting only the final hidden state, this flag concatenates the outputs of all 12 internal xLSTM layers.
+- **--use_data_augmentation:** This flag enables feature expansion. It appends difference embeddings and statistical features (patch-wise mean, std, max and min).
+
 ```bash
+# extracting last layer only, no data augmentation
 python -m scripts.cache_embeddings
+
+# using data augmentation
+python -m scripts.cache_embeddings --use_data_augmentation
+
+# high-dim setup (all 12 layers)
+python -m scripts.cache_embeddings --cache_all_layers
+
 ```
 This will save `.pt` files in `outputs/cache_parts/`.
 

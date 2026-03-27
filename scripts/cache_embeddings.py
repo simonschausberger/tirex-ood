@@ -2,6 +2,7 @@ import torch
 import tqdm
 import os
 import logging
+import argparse
 import torch.nn.functional as F
 from src.utils import setup_logging
 from src.feature_extractor import TiRexEmbedding
@@ -22,11 +23,11 @@ logging.getLogger("fsspec").setLevel(logging.ERROR)
 setup_logging(log_name="cache_all_groups_final")
 logger = logging.getLogger(__name__)
 
-def cache_all_groups():
+def cache_all_groups(all_layers, use_aug):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = "outputs/cache_parts"
     os.makedirs(output_dir, exist_ok=True)
-    embedder = TiRexEmbedding(device=device, extract_all_layers=True).eval()
+    embedder = TiRexEmbedding(device=device, extract_all_layers=all_layers, data_augmentation=use_aug).eval()
     
     # define dataset groupings for ID and OOD
     id_map = {REPO_CHRONOS: CHRONOS_TRAIN, 
@@ -156,4 +157,9 @@ def cache_all_groups():
     logger.info("Caching complete.")
 
 if __name__ == "__main__":
-    cache_all_groups()
+    parser = argparse.ArgumentParser(description="TiRex OOD Caching Script")
+    parser.add_argument("--cache_all_layers", action="store_true", help="Extract all layers instead of just the last one.")
+    parser.add_argument("--use_data_augmentation", action="store_true", help="Enable Difference and Statistics augmentation.")
+    
+    args = parser.parse_args()
+    cache_all_groups(all_layers=args.cache_all_layers, use_aug=args.use_data_augmentation)
