@@ -65,7 +65,7 @@ This produces `outputs/final_ood_scores.csv`.
 ### 4. Compute Metrics
 Evaluate the performance by calculating metrics such as AUROC and FPR@95%TPR for each OOD dataset.
 ```bash
-python -m scripts.compute_metrics.py
+python -m scripts.compute_metrics
 ```
 Results are saved to `outputs/fpr95tpr.csv`.
 
