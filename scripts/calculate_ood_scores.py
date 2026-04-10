@@ -13,6 +13,7 @@ def run_scoring():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     output_dir = "outputs"
     cache_dir = "outputs/cache_parts"
+    batch_size = 256
 
     # loading baseline
     baseline_path = "outputs/baseline_stats.pt"
@@ -56,8 +57,12 @@ def run_scoring():
                 use_ln = "ln" in mode_name
                 norm_embs = TiRexEmbedding.apply_normalization(raw_embeddings, use_l2=use_l2, use_ln=use_ln)
                 
-                # calculate OOD scores
-                scores = detector.get_score(norm_embs).cpu().numpy()
+                all_scores = []
+                for start_idx in range(0, n_samples, batch_size):
+                    end_idx = min(start_idx + batch_size, n_samples)
+                    batch_embs = norm_embs[start_idx:end_idx]
+                    batch_scores = detector.get_score(batch_embs).cpu().numpy()
+                    all_scores.extend(batch_scores)
                 
                 logger.debug(f"Computed {mode_name} scores for {subset_name}")
 
@@ -68,9 +73,11 @@ def run_scoring():
                         "sample_idx": i,
                         "mse": mses[i],
                         "mase": mases[i],
-                        "ood_score": scores[i],
+                        "ood_score": all_scores[i],
                         "norm_mode": mode_name
                     })
+            
+            torch.cuda.empty_cache()
 
     # save to a single CSV for easy plotting
     df = pd.DataFrame(final_results)
