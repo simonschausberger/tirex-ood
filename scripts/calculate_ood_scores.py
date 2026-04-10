@@ -15,13 +15,12 @@ def run_scoring():
     cache_dir = "outputs/cache_parts"
     batch_size = 256
 
-    # loading baseline
     baseline_path = "outputs/baseline_stats.pt"
     if not os.path.exists(baseline_path):
         logger.error("Baseline file not found. Run compute_baseline.py first.")
         return
     
-    all_baselines = torch.load(baseline_path, map_location=device)
+    all_baselines = torch.load(baseline_path, map_location="cpu")
 
     group_files = {
         "ID_TRAIN": "cache_id_train.pt",
@@ -38,33 +37,37 @@ def run_scoring():
             continue
             
         logger.info(f"Scoring Group: {group_name}")
-        group_cache = torch.load(file_path, map_location=device)
+        group_cache = torch.load(file_path, map_location="cpu")
 
         for subset_name, content in group_cache.items():
             raw_embeddings = content['embeddings'].float()
-            mses = content['mses'].cpu().numpy()
-            mases = content['mases'].cpu().numpy()
+            mses = content['mses'].numpy()
+            mases = content['mases'].numpy()
             n_samples = len(raw_embeddings)
             
             for mode_name, stats in all_baselines.items():
-                # initialize Mahalanobis class
                 detector = Mahalanobis()
-                detector.inv_covariance_matrix = stats['inv_cov']
-                detector.means_tensor = stats['means_tensor']
+                detector.inv_covariance_matrix = stats['inv_cov'].to(device)
+                detector.means_tensor = stats['means_tensor'].to(device)
                 
-                # apply the specific normalization for this mode
                 use_l2 = "l2" in mode_name
                 use_ln = "ln" in mode_name
-                norm_embs = TiRexEmbedding.apply_normalization(raw_embeddings, use_l2=use_l2, use_ln=use_ln)
                 
                 all_scores = []
                 for start_idx in range(0, n_samples, batch_size):
                     end_idx = min(start_idx + batch_size, n_samples)
-                    batch_embs = norm_embs[start_idx:end_idx]
-                    batch_scores = detector.get_score(batch_embs).cpu().numpy()
+                    
+                    batch_raw = raw_embeddings[start_idx:end_idx]
+                    batch_norm = TiRexEmbedding.apply_normalization(
+                        batch_raw, use_l2=use_l2, use_ln=use_ln
+                    ).to(device)
+                    
+                    batch_scores = detector.get_score(batch_norm).cpu().numpy()
                     all_scores.extend(batch_scores)
                 
-                logger.debug(f"Computed {mode_name} scores for {subset_name}")
+                del detector.inv_covariance_matrix
+                del detector.means_tensor
+                torch.cuda.empty_cache()
 
                 for i in range(n_samples):
                     final_results.append({
@@ -77,16 +80,14 @@ def run_scoring():
                         "norm_mode": mode_name
                     })
             
-            torch.cuda.empty_cache()
+            logger.info(f"Finished subset: {subset_name}")
 
-    # save to a single CSV for easy plotting
     df = pd.DataFrame(final_results)
     save_path = os.path.join(output_dir, "final_ood_scores.csv")
     df.to_csv(save_path, index=False)
     
     logger.info(f"Score file saved to {save_path}")
     
-    # a quick sanity check
     summary = df.groupby(['group', 'norm_mode'])['ood_score'].mean().unstack()
     print("Mean OOD scores")
     print(summary)
