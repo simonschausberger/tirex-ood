@@ -13,7 +13,7 @@ results = []
 
 for norm_mode, df_m in df.groupby("norm_mode"):
      # compute the threshold using ID_train only
-    id_scores = df_m[df_m["group"] == "ID_TRAIN"]["ood_score"].values
+    id_scores = df_m[df_m["group"] == "ID_VAL"]["ood_score"].values
     if len(id_scores) == 0:
         continue
 
