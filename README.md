@@ -67,7 +67,7 @@ Evaluate the performance by calculating metrics such as AUROC and FPR@95%TPR for
 ```bash
 python -m scripts.compute_metrics
 ```
-Results are saved to `outputs/fpr95tpr.csv`.
+Results are saved to `outputs/metrics_summary.csv`.
 
 ### 5. Visualize Results
 Results can be visualized by executing the cells in the notebook `notebooks/results_visualization.ipynb`.
